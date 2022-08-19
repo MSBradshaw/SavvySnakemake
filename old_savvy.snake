@@ -1,0 +1,73 @@
+ref_samp_path = '/scratch/Shares/layer/workspace/michael_sandbox/1000GenomesData/BI_300_1000_genomes_samples.reference.txt'
+non_ref_path = '/scratch/Shares/layer/workspace/michael_sandbox/1000GenomesData/BI_300_1000_genomes_samples.non_reference.txt'
+
+ref_samp_path = config['ref_samples']
+non_ref_path = config['samples']
+
+ref_samps = [l.strip() for l in open(ref_samp_path,'r')]
+example_samps = [l.strip() for l in open(non_ref_path,'r')]
+
+"""
+How to run with command line params
+Snakemake --cores 10 --config assembly="metaspades" binning="metabat" trimming="trimmomatic"
+https://www.biostars.org/p/9504252/
+
+--config --ref_samples="ref_samps.txt" --samples="samples.txt"
+
+"""
+
+rule all:
+	input:
+		expand('CoverageBinnerOut/{sample}.coverageBinner',sample=example_samps),
+		expand('CoverageBinnerOutReference/{sample}.coverageBinner',sample=ref_samps),
+		'SavvycnvResults/cnv_list.bed'
+
+rule coverage_binner:
+	input:
+		bam='/scratch/Shares/layer/workspace/michael_sandbox/1000GenomesData/NonRefBams/{sample}.bam',
+		bai='/scratch/Shares/layer/workspace/michael_sandbox/1000GenomesData/NonRefBams/{sample}.bai'
+	output:
+		output = 'CoverageBinnerOut/{sample}.coverageBinner'
+	threads: 2
+	shell:
+		"""
+		mkdir -p CoverageBinnerOut/
+		java -Xmx1g CoverageBinner {input.bam} > {output}
+		"""
+
+rule coverage_binner_ref:
+        input:
+                bam='/scratch/Shares/layer/workspace/michael_sandbox/1000GenomesData/RefBams/{sample}.bam',
+                bai='/scratch/Shares/layer/workspace/michael_sandbox/1000GenomesData/RefBams/{sample}.bai'
+        output:
+                output = 'CoverageBinnerOutReference/{sample}.coverageBinner'
+	threads: 2
+        shell:
+                """
+                mkdir -p CoverageBinnerOut/
+                java -Xmx1g CoverageBinner {input.bam} > {output}
+                """
+
+rule call_stuff:
+	input:
+		coverageFiles = expand('CoverageBinnerOut/{sample}.coverageBinner',sample=example_samps),
+		ref_coverageFiles = expand('CoverageBinnerOutReference/{sample}.coverageBinner',sample=ref_samps)
+	output:
+		'SavvycnvResults/cnv_list.bed'
+	shell:
+		"""
+		mkdir -p SavvycnvResults
+		mkdir -p SavvycnvResults/SavvycnvCoverageSummary
+		mkdir -p SavvycnvResults/pdfs
+		java -Xmx30g SavvyCNV -d 1000 -case CoverageBinnerOut/*.coverageBinner -control CoverageBinnerOutReference/*.coverageBinner > cnv_list.bed 2>log_messages.txt
+		mv cnv_list.bed {output}
+		"""
+
+
+
+
+
+
+
+
+

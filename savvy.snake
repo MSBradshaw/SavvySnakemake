@@ -1,0 +1,92 @@
+ref_samp_path = config['ref_samples']
+non_ref_path = config['samples']
+
+ref_samps = [l.strip().split('/')[-1].replace('.bam','') for l in open(ref_samp_path,'r')]
+non_ref_samps = [l.strip().split('/')[-1].replace('.bam','') for l in open(non_ref_path,'r')]
+
+"""
+How to run with command line params
+Snakemake --cores 10 --config assembly="metaspades" binning="metabat" trimming="trimmomatic"
+https://www.biostars.org/p/9504252/
+
+NOTE: file paths need to be absolute not relative
+snakemake -s new_savvy.snake --cores 64 --config ref_samples="ref_samples.example.txt" samples="samples.example.txt"
+
+"""
+
+rule all:
+	input:
+		expand('RefSamps/{sample}.bam',sample=ref_samps),
+		expand('NonRefSamps/{sample}.bam',sample=non_ref_samps),
+		expand('CoverageBinnerOut/{sample}.coverageBinner',sample=non_ref_samps),
+		expand('CoverageBinnerOutReference/{sample}.coverageBinner',sample=ref_samps),
+		'SavvycnvResults/cnv_list.bed'
+
+rule create_symlink_script:
+	output:
+		'symlink_files.sh'
+	run:
+		with open('symlink_files.sh','w') as outfile:
+			for line in open(config['ref_samples'],'r'):
+				fname = line.split('/')[-1]
+				outfile.write('ln -f -s {} RefSamps/{}'.format(line.strip(),fname))
+				outfile.write('ln -f -s {} RefSamps/{}'.format(line.strip().replace('.bam','.bai'),fname.replace('.bam','.bai')))
+			for line in open(config['samples'],'r'):
+				fname = line.split('/')[-1]
+				outfile.write('ln -f -s {} NonRefSamps/{}'.format(line.strip(),fname))
+				outfile.write('ln -f -s {} RefSamps/{}'.format(line.strip().replace('.bam','.bai'),fname.replace('.bam','.bai')))
+
+rule symlink_files:
+	input:
+		'symlink_files.sh'
+	output:
+		expand('RefSamps/{sample}.bam',sample=ref_samps),
+		expand('NonRefSamps/{sample}.bam',sample=non_ref_samps)
+	shell:
+		"""
+		mkdir -p RefSamps
+		mkdir -p NonRefSamps
+		bash symlink_files.sh
+		"""
+
+rule coverage_binner:
+	input:
+		bam='NonRefSamps/{sample}.bam',
+		bai='NonRefSamps/{sample}.bai'
+	output:
+		output = 'CoverageBinnerOut/{sample}.coverageBinner'
+	threads: 2
+	shell:
+		"""
+		mkdir -p CoverageBinnerOut/
+		java -Xmx1g CoverageBinner {input.bam} > {output}
+		"""
+
+
+rule coverage_binner_ref:
+	input:
+		bam='RefSamps/{sample}.bam',
+		bai='RefSamps/{sample}.bai'
+	output:
+		'CoverageBinnerOutReference/{sample}.coverageBinner'
+	threads: 2
+	shell:
+		"""
+		mkdir -p CoverageBinnerOut/
+		java -Xmx1g CoverageBinner {input.bam} > {output}
+		"""
+
+rule call_stuff:
+	input:
+		coverageFiles = expand('CoverageBinnerOut/{sample}.coverageBinner',sample=non_ref_samps),
+		ref_coverageFiles = expand('CoverageBinnerOutReference/{sample}.coverageBinner',sample=ref_samps)
+	output:
+		'SavvycnvResults/cnv_list.bed'
+	shell:
+		"""
+		mkdir -p SavvycnvResults
+		mkdir -p SavvycnvResults/SavvycnvCoverageSummary
+		mkdir -p SavvycnvResults/pdfs
+		java -Xmx30g SavvyCNV -d 1000 -case CoverageBinnerOut/*.coverageBinner -control CoverageBinnerOutReference/*.coverageBinner > cnv_list.bed 2>log_messages.txt
+		mv cnv_list.bed {output}
+		"""
